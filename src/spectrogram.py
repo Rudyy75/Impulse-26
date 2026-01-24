@@ -1,68 +1,58 @@
+
 import torch
-import torchaudio
+import torch.nn as nn
 import torchaudio.transforms as T
 import torch.nn.functional as F
-import random
-from .config import SAMPLE_RATE, N_SAMPLES, N_FFT, HOP_LENGTH, N_MELS
 
-def load_audio(audio_path):
+class GPUPipeline(nn.Module):
     """
-    Loads an audio file and processes it into a fixed-length mono waveform.
-    
-    1. Load audio
-    2. Resample to 22050 Hz
-    3. Convert to Mono
-    4. Randomly crop or pad to exactly 5 seconds
+    Centralized GPU Pipeline for Audio Preprocessing.
+    Handles: Resampling -> MelSpectrogram -> AmplitudeToDB -> Normalization.
+    Safe for Mixed Precision and handles NaNs/Silence.
     """
-    try:
-        # 1. Load Audio
-        waveform, sr = torchaudio.load(audio_path)
-    except Exception as e:
-        print(f"Error loading {audio_path}: {e}")
-        # Return a silent tensor of correct shape as fallback
-        return torch.zeros(1, N_SAMPLES)
+    def __init__(self, sample_rate=22050, n_fft=2048, hop_length=512, n_mels=128, device='cuda'):
+        super().__init__()
+        self.device = device
+        self.target_sr = sample_rate
+        
+        # Resamplers (Lazy init could be better, but fixed usually fine)
+        # We assume input is 44.1k (Standard FMA)
+        self.resampler_44k = T.Resample(44100, sample_rate).to(device)
+        
+        # Spectrogram
+        self.melspec = T.MelSpectrogram(
+            sample_rate=sample_rate,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            n_mels=n_mels
+        ).to(device)
+        
+        self.amp_to_db = T.AmplitudeToDB().to(device)
 
-    # 2. Resample if necessary
-    if sr != SAMPLE_RATE:
-        resampler = T.Resample(sr, SAMPLE_RATE)
-        waveform = resampler(waveform)
-
-    # 3. Convert to Mono (average across channels)
-    if waveform.shape[0] > 1:
-        waveform = torch.mean(waveform, dim=0, keepdim=True)
-
-    # 4. Handle Length (Crop or Pad)
-    current_samples = waveform.shape[1]
-
-    if current_samples > N_SAMPLES:
-        # Random Crop
-        start_idx = random.randint(0, current_samples - N_SAMPLES)
-        waveform = waveform[:, start_idx : start_idx + N_SAMPLES]
-    elif current_samples < N_SAMPLES:
-        # Zero Pad
-        padding = N_SAMPLES - current_samples
-        waveform = F.pad(waveform, (0, padding))
-    
-    # Ensure shape is (1, N_SAMPLES)
-    return waveform
-
-def audio_to_melspec(waveform):
-    """
-    Converts a waveform to a Log-Mel Spectrogram.
-    """
-    # Define Transform
-    mel_transform = T.MelSpectrogram(
-        sample_rate=SAMPLE_RATE,
-        n_fft=N_FFT,
-        hop_length=HOP_LENGTH,
-        n_mels=N_MELS,
-        normalized=True 
-    )
-
-    # Apply Transform
-    mel_spec = mel_transform(waveform)
-
-    # Log-Mel Spectrogram (add epsilon to avoid log(0))
-    log_mel_spec = torch.log(mel_spec + 1e-9)
-
-    return log_mel_spec
+    def forward(self, waveforms, original_sr=44100):
+        # waveforms: (B, T)
+        
+        # 1. Resample
+        if original_sr != self.target_sr:
+            if original_sr == 44100:
+                waveforms = self.resampler_44k(waveforms)
+            else:
+                # Fallback: Create dynamic resampler (Slow)
+                resampler = T.Resample(original_sr, self.target_sr).to(self.device)
+                waveforms = resampler(waveforms)
+                
+        # 2. MelSpec
+        mels = self.melspec(waveforms)
+        mels = self.amp_to_db(mels)
+        
+        # 3. Safety (NaN/Inf)
+        mels = torch.nan_to_num(mels, nan=-80.0, posinf=0.0, neginf=-80.0)
+        mels = torch.clamp(mels, min=-100.0, max=100.0)
+        
+        # 4. Normalize (Global Scale approx for FMA)
+        # -80dB to 0dB -> [-1, 1]
+        mels = (mels + 80) / 80
+        mels = mels.unsqueeze(1) # (B, 1, F, T)
+        mels = mels * 2 - 1
+        
+        return mels
