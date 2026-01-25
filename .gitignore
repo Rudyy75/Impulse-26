@@ -10,16 +10,11 @@ env/
 .env
 
 # Data & Models (Large Files)
-data/
 weights/
-*.pth
-*.pt
-*.faiss
 *.pkl
 *.wav
 *.mp3
-vector_db.pt
-index.faiss
+
 
 # Images
 *.png
