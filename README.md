@@ -12,8 +12,8 @@ EchoFind is a retrieval and synthesis engine built using SimCLR (Contrastive Lea
 ## 🧪 Evaluation & Benchmarks
 We have achieved two distinct performance tiers during development:
 
-- **Legacy V1 (ResNet18):** Peak Search Accuracy: **36%** | F1 Score: **45%**.
-- **Current V2 (ResNet50):** Highly modular and scalable, but currently requires more training cycles to reach peak discriminative power (Last recorded F1: ~31%).
+- **Current V1 (ResNet18):** Peak Search Accuracy: **36%** | F1 Score: **45%**.
+- **Experimented V2 (ResNet50):** Highly modular and scalable, but currently requires more training cycles to reach peak discriminative power (Last recorded F1: ~31%).
 
 > [!IMPORTANT]
 > For proof of the high-water benchmarks (36%/45%), please refer to **`src/BENCHMARK_LOGS.txt`**, which contains the full terminal outputs from those runs.
@@ -25,9 +25,13 @@ python -m src.test_acid
 ```
 
 ## 🧠 Model Architecture
-- **V2 Backbone:** ResNet50 (1-Channel input).
+- **V1 Backbone:** ResNEt 18 
 - **Projector:** 128-dim discriminative head (`z`) optimized for retrieval.
 - **Optimizer:** SimCLR Contrastive Objective.
+
+We tried ResnNet 18 first, which gave us a good amount of accuracy, on which we decided to improve and make it ResNet50. But in the end we had to rollback to ResNet - 18
+Everything is in BENCHMARK_LOGS.txt and RESULTS_PROOF.md
+
 
 ## 🛠️ Phase Mapping
 | File | Phase |
